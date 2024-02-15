@@ -237,6 +237,17 @@ class Model(nn.Module):
                 f"argument directly in your inference command, i.e. 'model.predict(source=..., device=0)'"
             )
 
+    def s_train(self, mode: bool = True):
+        if not isinstance(mode, bool):
+            raise ValueError("training mode is expected to be boolean")
+        self.training = mode
+        for module in self.children():
+            module.train(mode)
+        return self
+
+    def s_eval(self):
+        return self.s_train(False)
+
     def reset_weights(self):
         """
         Resets the model parameters to randomly initialized values, effectively discarding all training information.
@@ -329,6 +340,10 @@ class Model(nn.Module):
         """
         self._check_is_pytorch_model()
         self.model.fuse()
+
+    def fuse_for_quantization(self):
+        self._check_is_pytorch_model()
+        self.model.fuse_for_quantization()
 
     def embed(self, source=None, stream=False, **kwargs):
         """

@@ -158,13 +158,14 @@ class SPPF(nn.Module):
         self.cv1 = Conv(c1, c_, 1, 1)
         self.cv2 = Conv(c_ * 4, c2, 1, 1)
         self.m = nn.MaxPool2d(kernel_size=k, stride=1, padding=k // 2)
+        self.torch_cat = nn.quantized.FloatFunctional()
 
     def forward(self, x):
         """Forward pass through Ghost Convolution block."""
         x = self.cv1(x)
         y1 = self.m(x)
         y2 = self.m(y1)
-        return self.cv2(torch.cat((x, y1, y2, self.m(y2)), 1))
+        return self.cv2(self.torch_cat.cat((x, y1, y2, self.m(y2)), 1))
 
 
 class C1(nn.Module):
@@ -214,18 +215,19 @@ class C2f(nn.Module):
         self.cv1 = Conv(c1, 2 * self.c, 1, 1)
         self.cv2 = Conv((2 + n) * self.c, c2, 1)  # optional act=FReLU(c2)
         self.m = nn.ModuleList(Bottleneck(self.c, self.c, shortcut, g, k=((3, 3), (3, 3)), e=1.0) for _ in range(n))
+        self.torch_cat = nn.quantized.FloatFunctional()
 
     def forward(self, x):
         """Forward pass through C2f layer."""
         y = list(self.cv1(x).chunk(2, 1))
         y.extend(m(y[-1]) for m in self.m)
-        return self.cv2(torch.cat(y, 1))
+        return self.cv2(self.torch_cat.cat(y, 1))
 
     def forward_split(self, x):
         """Forward pass using split() instead of chunk()."""
         y = list(self.cv1(x).split((self.c, self.c), 1))
         y.extend(m(y[-1]) for m in self.m)
-        return self.cv2(torch.cat(y, 1))
+        return self.cv2(self.torch_cat.cat(y, 1))
 
 
 class C3(nn.Module):
@@ -325,10 +327,11 @@ class Bottleneck(nn.Module):
         self.cv1 = Conv(c1, c_, k[0], 1)
         self.cv2 = Conv(c_, c2, k[1], 1, g=g)
         self.add = shortcut and c1 == c2
+        self.torch_add = nn.quantized.FloatFunctional()
 
     def forward(self, x):
         """'forward()' applies the YOLO FPN to input data."""
-        return x + self.cv2(self.cv1(x)) if self.add else self.cv2(self.cv1(x))
+        return self.torch_add.add(x, self.cv2(self.cv1(x)) if self.add else self.cv2(self.cv1(x)))
 
 
 class BottleneckCSP(nn.Module):

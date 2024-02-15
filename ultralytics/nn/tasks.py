@@ -6,6 +6,7 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
+from torch.ao.quantization import QuantStub, DeQuantStub
 
 from ultralytics.nn.modules import (
     AIFI,
@@ -186,6 +187,9 @@ class BaseModel(nn.Module):
 
         return self
 
+    def fuse_for_quantization(self):
+        raise NotImplementedError
+
     def is_fused(self, thresh=10):
         """
         Check if the model has less than a certain threshold of BatchNorm layers.
@@ -276,6 +280,7 @@ class DetectionModel(BaseModel):
             LOGGER.info(f"Overriding model.yaml nc={self.yaml['nc']} with nc={nc}")
             self.yaml["nc"] = nc  # override YAML value
         self.model, self.save = parse_model(deepcopy(self.yaml), ch=ch, verbose=verbose)  # model, savelist
+        self.quant = QuantStub()
         self.names = {i: f"{i}" for i in range(self.yaml["nc"])}  # default names dict
         self.inplace = self.yaml.get("inplace", True)
 
@@ -296,6 +301,11 @@ class DetectionModel(BaseModel):
         if verbose:
             self.info()
             LOGGER.info("")
+
+    def _predict_once(self, x, profile=False, visualize=False, embed=None):
+        x = self.quant(x)
+        x = super()._predict_once(x, profile, visualize, embed)
+        return x
 
     def _predict_augment(self, x):
         """Perform augmentations on input image x and return augmented inference and train outputs."""
@@ -332,6 +342,13 @@ class DetectionModel(BaseModel):
         i = (y[-1].shape[-1] // g) * sum(4 ** (nl - 1 - x) for x in range(e))  # indices
         y[-1] = y[-1][..., i:]  # small
         return y
+
+    def fuse_for_quantization(self):
+        fuse_modules = torch.ao.quantization.fuse_modules
+        for m in self.modules():
+            if type(m) == Conv:
+                fuse_modules(m, ['conv', 'bn', 'act'], inplace=True)
+        return self
 
     def init_criterion(self):
         """Initialize the loss criterion for the DetectionModel."""
