@@ -6,7 +6,6 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
-from torch.ao.quantization import QuantStub, DeQuantStub
 
 from ultralytics.nn.modules import (
     AIFI,
@@ -41,6 +40,14 @@ from ultralytics.nn.modules import (
     ResNetLayer,
     RTDETRDecoder,
     Segment,
+)
+from ultralytics.nn.quantization.modules import (
+    QBottleneck,
+    QC2f,
+    QConv,
+    QConcat,
+    QSPPF,
+    Quant
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER, colorstr, emojis, yaml_load
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
@@ -170,7 +177,7 @@ class BaseModel(nn.Module):
         """
         if not self.is_fused():
             for m in self.model.modules():
-                if isinstance(m, (Conv, Conv2, DWConv)) and hasattr(m, "bn"):
+                if isinstance(m, (Conv, QConv, Conv2, DWConv)) and hasattr(m, "bn"):
                     if isinstance(m, Conv2):
                         m.fuse_convs()
                     m.conv = fuse_conv_and_bn(m.conv, m.bn)  # update conv
@@ -280,7 +287,6 @@ class DetectionModel(BaseModel):
             LOGGER.info(f"Overriding model.yaml nc={self.yaml['nc']} with nc={nc}")
             self.yaml["nc"] = nc  # override YAML value
         self.model, self.save = parse_model(deepcopy(self.yaml), ch=ch, verbose=verbose)  # model, savelist
-        self.quant = QuantStub()
         self.names = {i: f"{i}" for i in range(self.yaml["nc"])}  # default names dict
         self.inplace = self.yaml.get("inplace", True)
 
@@ -301,11 +307,6 @@ class DetectionModel(BaseModel):
         if verbose:
             self.info()
             LOGGER.info("")
-
-    def _predict_once(self, x, profile=False, visualize=False, embed=None):
-        x = self.quant(x)
-        x = super()._predict_once(x, profile, visualize, embed)
-        return x
 
     def _predict_augment(self, x):
         """Perform augmentations on input image x and return augmented inference and train outputs."""
@@ -344,10 +345,14 @@ class DetectionModel(BaseModel):
         return y
 
     def fuse_for_quantization(self):
-        fuse_modules = torch.ao.quantization.fuse_modules
-        for m in self.modules():
-            if type(m) == Conv:
-                fuse_modules(m, ['conv', 'bn', 'act'], inplace=True)
+        if not self.is_fused():
+            fuse_modules = torch.ao.quantization.fuse_modules
+            for m in self.modules():
+                if type(m) == QConv:
+                    fuse_modules(m, ['conv', 'bn', 'act'], inplace=True)
+                    m.forward = m.forward_quant_fuse
+                    delattr(m, 'bn')
+                    delattr(m, 'act')
         return self
 
     def init_criterion(self):
@@ -783,18 +788,22 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
         if m in (
             Classify,
             Conv,
+            QConv,
             ConvTranspose,
             GhostConv,
             Bottleneck,
+            QBottleneck,
             GhostBottleneck,
             SPP,
             SPPF,
+            QSPPF,
             DWConv,
             Focus,
             BottleneckCSP,
             C1,
             C2,
             C2f,
+            QC2f,
             C3,
             C3TR,
             C3Ghost,
@@ -808,7 +817,7 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
                 c2 = make_divisible(min(c2, max_channels) * width, 8)
 
             args = [c1, c2, *args[1:]]
-            if m in (BottleneckCSP, C1, C2, C2f, C3, C3TR, C3Ghost, C3x, RepC3):
+            if m in (BottleneckCSP, C1, C2, C2f, QC2f, C3, C3TR, C3Ghost, C3x, RepC3):
                 args.insert(2, n)  # number of repeats
                 n = 1
         elif m is AIFI:
@@ -823,7 +832,7 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             c2 = args[1] if args[3] else args[1] * 4
         elif m is nn.BatchNorm2d:
             args = [ch[f]]
-        elif m is Concat:
+        elif m in (Concat, QConcat):
             c2 = sum(ch[x] for x in f)
         elif m in (Detect, Segment, Pose, OBB):
             args.append([ch[x] for x in f])

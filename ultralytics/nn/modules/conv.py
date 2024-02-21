@@ -36,7 +36,7 @@ def autopad(k, p=None, d=1):  # kernel, padding, dilation
 class Conv(nn.Module):
     """Standard convolution with args(ch_in, ch_out, kernel, stride, padding, groups, dilation, activation)."""
 
-    default_act = nn.ReLU()  # default activation
+    default_act = nn.SiLU()  # default activation
 
     def __init__(self, c1, c2, k=1, s=1, p=None, g=1, d=1, act=True):
         """Initialize Conv layer with given arguments including activation."""
@@ -326,9 +326,8 @@ class Concat(nn.Module):
     def __init__(self, dimension=1):
         """Concatenates a list of tensors along a specified dimension."""
         super().__init__()
-        self.torch_cat = nn.quantized.FloatFunctional()
         self.d = dimension
 
     def forward(self, x):
         """Forward pass for the YOLOv8 mask Proto module."""
-        return self.torch_cat.cat(x, self.d)
+        return torch.cat(x, self.d)
