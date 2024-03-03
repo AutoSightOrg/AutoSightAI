@@ -2,6 +2,6 @@
 
 from .rtdetr import RTDETR
 from .sam import SAM
-from .yolo import YOLO
+from .yolo import YOLO, QuantizedYOLO
 
-__all__ = "YOLO", "RTDETR", "SAM"  # allow simpler import
+__all__ = "YOLO", "QuantizedYOLO", "RTDETR", "SAM"  # allow simpler import
