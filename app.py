@@ -1,18 +1,23 @@
 import sys
+import torch
+
 from ultralytics import QuantizedYOLO
 
 
 def main() -> int:
-    model = QuantizedYOLO(
-        model='../models/quant-ready/model.pt',
+    torch.backends.quantized.engine = 'x86'
+
+    model = QuantizedYOLO(model='../models/quant-ready/model.pt')
+    model.quant(
         qconfig='x86',
-        quant_weights='../models/quantized/model.pt'
+        calibrate='../full_dataset_v0.2/val/images/'
     )
+    model.export(format='torchscript', imgsz=(640, 640))
 
-    results = model.predict(source='0', stream=True, conf=0.8)
-    for result in results:
+    jit_model = QuantizedYOLO(model='../models/quant-ready/model.torchscript')
+    results = jit_model('../test-videos/test2.mp4', stream=True, conf=0.8)
+    for _ in results:
         pass
-
     return 0
 
 
