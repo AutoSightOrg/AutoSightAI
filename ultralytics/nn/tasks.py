@@ -1,6 +1,7 @@
 # Ultralytics YOLO 🚀, AGPL-3.0 license
 
 import contextlib
+import warnings
 from copy import deepcopy
 from pathlib import Path
 
@@ -194,9 +195,6 @@ class BaseModel(nn.Module):
 
         return self
 
-    def fuse_for_quantization(self):
-        raise NotImplementedError
-
     def is_fused(self, thresh=10):
         """
         Check if the model has less than a certain threshold of BatchNorm layers.
@@ -344,9 +342,22 @@ class DetectionModel(BaseModel):
         y[-1] = y[-1][..., i:]  # small
         return y
 
-    def fuse_for_quantization(self):
+    def init_criterion(self):
+        """Initialize the loss criterion for the DetectionModel."""
+        return v8DetectionLoss(self)
+
+
+class QuantizableDetectionModel(DetectionModel):
+    qconfig = None
+    prepared_for_quant = False
+    quantized = False
+
+    def __init__(self, cfg="yolov8n-quant-detect.yaml", ch=3, nc=None, verbose=True):
+        super().__init__(cfg, ch, nc, verbose)
+
+    def _fuse_for_quantization(self, is_qat=False):
         if not self.is_fused():
-            fuse_modules = torch.ao.quantization.fuse_modules
+            fuse_modules = torch.ao.quantization.fuse_modules_qat if is_qat else torch.ao.quantization.fuse_modules
             for m in self.modules():
                 if type(m) == QConv:
                     fuse_modules(m, ['conv', 'bn', 'act'], inplace=True)
@@ -355,9 +366,28 @@ class DetectionModel(BaseModel):
                     delattr(m, 'act')
         return self
 
-    def init_criterion(self):
-        """Initialize the loss criterion for the DetectionModel."""
-        return v8DetectionLoss(self)
+    def _prepare_for_stat_quant(self, qconfig='x86'):
+        self.to('cpu')
+        self.eval()
+        self._fuse_for_quantization(is_qat=False)
+        self.qconfig = torch.ao.quantization.get_default_qconfig(qconfig)
+        with warnings.catch_warnings(action="ignore"):
+            torch.ao.quantization.prepare(self, inplace=True)
+
+    def _prepare_for_qat(self, qconfig='x86'):
+        self._fuse_for_quantization(is_qat=True)
+        self.qconfig = torch.ao.quantization.get_default_qat_qconfig(qconfig)
+        with warnings.catch_warnings(action="ignore"):
+            torch.ao.quantization.prepare_qat(self, inplace=True)
+
+    def prepare(self, qconfig='x86', is_qat=False):
+        assert not self.prepared_for_quant
+        self._prepare_for_qat(qconfig) if is_qat else self._prepare_for_stat_quant(qconfig)
+        self.prepared_for_quant = True
+
+    def convert(self):
+        assert self.prepared_for_quant and not self.quantized
+        torch.ao.quantization.convert(self, inplace=True)
 
 
 class OBBModel(DetectionModel):
