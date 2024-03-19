@@ -53,13 +53,12 @@ class YOLO(Model):
 class QuantizableYOLO(YOLO):
     def __init__(self, model: Union[str, Path] = 'yolov8n-quant-detect.yaml', task='detect', verbose=False) -> None:
         super().__init__(model, task, verbose)
-        self._quantized = model.split('.')[-1] == 'torchscript'
 
     def quant(self, qconfig='x86', calibrate=None):
         self.model.prepare(qconfig=qconfig, is_qat=False)
         if calibrate is not None:
             self.predict(calibrate)
-        self.model.convert()
+        self.model.convert(is_qat=False)
 
     @property
     def task_map(self):
@@ -76,7 +75,6 @@ class QuantizableYOLO(YOLO):
 class QuantizationAwareYOLO(YOLO):
     def __init__(self, model: Union[str, Path] = 'yolov8n-quant-detect.yaml', task='detect', verbose=False) -> None:
         super().__init__(model, task, verbose)
-        self._quantized = model.split('.')[-1] == 'torchscript'
 
     def train(self, trainer=None, qat=False, qconfig='x86', **kwargs):
         self._check_is_pytorch_model()
@@ -89,7 +87,7 @@ class QuantizationAwareYOLO(YOLO):
 
         overrides = yaml_load(checks.check_yaml(kwargs["cfg"])) if kwargs.get("cfg") else self.overrides
         custom = {"data": DEFAULT_CFG_DICT["data"] or TASK2DATA[self.task]}  # method defaults
-        args = {**overrides, **custom, **kwargs, "mode": "train"}  # highest priority args on the right
+        args = {**overrides, **custom, "amp": not qat, **kwargs, "mode": "train"}
         if args.get("resume"):
             args["resume"] = self.ckpt_path
 
@@ -114,7 +112,7 @@ class QuantizationAwareYOLO(YOLO):
                     pass
 
         self.trainer.hub_session = self.session  # attach optional HUB session
-        self.trainer.train(disable_ema=qat)
+        self.trainer.train(qat=qat)
         # Update model and cfg after training
         if RANK in (-1, 0):
             ckpt = self.trainer.best if self.trainer.best.exists() else self.trainer.last
@@ -125,7 +123,7 @@ class QuantizationAwareYOLO(YOLO):
 
     def convert(self):
         self._check_is_pytorch_model()
-        self.model.convert()
+        self.model.convert(is_qat=True)
 
     @property
     def task_map(self):

@@ -1,7 +1,6 @@
 # Ultralytics YOLO 🚀, AGPL-3.0 license
 
 import contextlib
-import warnings
 from copy import deepcopy
 from pathlib import Path
 
@@ -372,22 +371,24 @@ class QuantizableDetectionModel(DetectionModel):
         self.eval()
         self._fuse_for_quantization(is_qat=False)
         self.qconfig = torch.ao.quantization.get_default_qconfig(qconfig)
-        with warnings.catch_warnings(action="ignore"):
-            torch.ao.quantization.prepare(self, inplace=True)
+        torch.ao.quantization.prepare(self, inplace=True)
 
     def _prepare_for_qat(self, qconfig='x86'):
         self._fuse_for_quantization(is_qat=True)
         self.qconfig = torch.ao.quantization.get_default_qat_qconfig(qconfig)
-        with warnings.catch_warnings(action="ignore"):
-            torch.ao.quantization.prepare_qat(self, inplace=True)
+        torch.ao.quantization.prepare_qat(self, inplace=True)
+        self.apply(torch.ao.quantization.enable_observer)
+        self.apply(torch.ao.quantization.enable_fake_quant)
 
     def prepare(self, qconfig='x86', is_qat=False):
         assert not self.prepared_for_quant
         self._prepare_for_qat(qconfig) if is_qat else self._prepare_for_stat_quant(qconfig)
         self.prepared_for_quant = True
 
-    def convert(self):
+    def convert(self, is_qat=False):
         assert self.prepared_for_quant and not self.quantized
+        if is_qat:
+            self.eval()
         torch.ao.quantization.convert(self, inplace=True)
 
 
