@@ -79,11 +79,12 @@ class DatasetManager:
         plt.show()
 
     def dataset_balancing(self):
-        # returns the names of the classes that needs to be
+        # returns the names of the classes that needs to be oversampled
         images_to_oversample = self.get_images_to_oversample()
         self._transform_images_balance(images_to_oversample, 0)
 
     def get_images_to_oversample(self):
+        # needed instance counts from each class for oversampling
         class_counts = [
             len(images_by_class) for images_by_class in self.images_by_classes
         ]
@@ -92,32 +93,19 @@ class DatasetManager:
             max_class_count - count if count != 0 else 0 for count in class_counts
         ]
 
-        images_to_oversample = []
-        cycle_not_found_threshold = 10
+        images_to_oversample = (
+            []
+        )  # array to store image names which are going to be oversampled
+
+        # oversampling (main loop)
         for class_ in range(len(class_counts_needed)):
-            cycle_not_found = 0
-            # add images randomly until cannot add within "cycle_not_found_threshold" cycles
-            while (
-                class_counts_needed[class_] > 0
-                and cycle_not_found < cycle_not_found_threshold
-            ):
-                random_img = random.choice(self.images_by_classes[class_])
-                add = True
-                for class2_ in self.classes_by_images[random_img]:
-                    if class_counts_needed[class2_] <= 0:
-                        add = False
-                        break
-                if add:
-                    for class2_ in self.classes_by_images[random_img]:
-                        class_counts_needed[class2_] -= 1
-                    images_to_oversample.append(random_img)
-                    cycle_not_found = 0
-                else:
-                    cycle_not_found += 1
-            # add remained images (which was not selected randomly but still good)
-            for img in self.images_by_classes[class_]:
-                add = True
-                while add == True:
+            current_class_images = self.images_by_classes[class_].copy()
+            improved = True
+            while class_counts_needed[class_] > 0 and improved:
+                improved = False
+                random.shuffle(current_class_images)  # increase randomity
+                for img in current_class_images:
+                    add = True
                     for class2_ in self.classes_by_images[img]:
                         if class_counts_needed[class2_] <= 0:
                             add = False
@@ -125,9 +113,10 @@ class DatasetManager:
                     if add:
                         for class2_ in self.classes_by_images[img]:
                             class_counts_needed[class2_] -= 1
+                        improved = True
                         images_to_oversample.append(img)
 
-        # add images to the remained minor classes
+        # add images to the remained minority classes (even if it creates a slight inbalance)
         for class_ in range(len(class_counts_needed)):
             while class_counts_needed[class_] > 0:
                 random_img = random.choice(self.images_by_classes[class_])
