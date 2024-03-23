@@ -37,7 +37,7 @@ class BaseDataset(Dataset):
         single_cls (bool, optional): If True, single class training is used. Defaults to False.
         classes (list): List of included classes. Default is None.
         fraction (float): Fraction of dataset to utilize. Default is 1.0 (use all data).
-        sequential_data_oversampling (bool): Sequential data class oversampling on train data. Defaults to False.
+        class_oversampling (bool): Class oversampling on train data. Defaults to False.
 
     Attributes:
         im_files (list): List of image file paths.
@@ -63,7 +63,7 @@ class BaseDataset(Dataset):
         single_cls=False,
         classes=None,
         fraction=1.0,
-        sequential_data_oversampling=False,
+        class_oversampling=False,
     ):
         """Initialize BaseDataset with given configuration and options."""
         super().__init__()
@@ -75,7 +75,7 @@ class BaseDataset(Dataset):
         self.single_cls = single_cls
         self.prefix = prefix
         self.fraction = fraction
-        self.sequential_data_oversampling=sequential_data_oversampling
+        self.class_oversampling = class_oversampling
         self.dataset_manager = DatasetManager(
             root_dir=self.dataset_path,
             class_names=[data for data in (self.data["names"].values())],
@@ -141,7 +141,7 @@ class BaseDataset(Dataset):
                 if x.split(".")[-1].lower() in IMG_FORMATS
             )
             # oversampling on train data
-            if self.sequential_data_oversampling and self.data_type == "train":
+            if self.class_oversampling and self.data_type == "train":
                 oversampled_images = self.dataset_manager.get_images_to_oversample()
                 im_files = sorted(
                     im_files
