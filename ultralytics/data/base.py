@@ -37,6 +37,7 @@ class BaseDataset(Dataset):
         single_cls (bool, optional): If True, single class training is used. Defaults to False.
         classes (list): List of included classes. Default is None.
         fraction (float): Fraction of dataset to utilize. Default is 1.0 (use all data).
+        class_fraction (float): Fraction of all classes from the dataset to utilize. Default is 1.0 (use all data).
         class_oversampling (bool): Class oversampling on train data. Defaults to False.
 
     Attributes:
@@ -63,6 +64,7 @@ class BaseDataset(Dataset):
         single_cls=False,
         classes=None,
         fraction=1.0,
+        class_fraction=1.0,
         class_oversampling=False,
     ):
         """Initialize BaseDataset with given configuration and options."""
@@ -75,6 +77,7 @@ class BaseDataset(Dataset):
         self.single_cls = single_cls
         self.prefix = prefix
         self.fraction = fraction
+        self.class_fraction = class_fraction
         self.class_oversampling = class_oversampling
         self.dataset_manager = DatasetManager(
             root_dir=self.dataset_path,
@@ -135,13 +138,15 @@ class BaseDataset(Dataset):
                         # F += [p.parent / x.lstrip(os.sep) for x in t]  # local to global path (pathlib)
                 else:
                     raise FileNotFoundError(f"{self.prefix}{p} does not exist")
+
             im_files = sorted(
                 x.replace("/", os.sep)
                 for x in f
                 if x.split(".")[-1].lower() in IMG_FORMATS
             )
-            # oversampling on train data
-            if self.class_oversampling and self.data_type == "train":
+
+            # class oversampling on train data
+            if self.class_oversampling:
                 oversampled_images = self.dataset_manager.get_images_to_oversample()
                 im_files = sorted(
                     im_files
@@ -150,14 +155,28 @@ class BaseDataset(Dataset):
                         for im_file in oversampled_images
                     ]
                 )
+                if self.fraction < 1 or self.class_fraction < 1:
+                    LOGGER.warning(
+                        f"{self.prefix}WARNING ⚠️ Both fraction and oversampling is not recommended to be used at the same time. Ignoring fraction..."
+                    )
+            else:
+                if self.fraction < 1:  # normal fraction has priority
+                    im_files = im_files[: round(len(im_files) * self.fraction)]
+                elif self.class_fraction < 1:
+                    im_files = sorted(
+                        [
+                            os.path.join(self.img_path, im_file)
+                            for im_file in self.dataset_manager.get_class_fraction_images(
+                                self.class_fraction
+                            )
+                        ]
+                    )
             # self.img_files = sorted([x for x in f if x.suffix[1:].lower() in IMG_FORMATS])  # pathlib
             assert im_files, f"{self.prefix}No images found in {img_path}"
         except Exception as e:
             raise FileNotFoundError(
                 f"{self.prefix}Error loading data from {img_path}\n{HELP_URL}"
             ) from e
-        if self.fraction < 1:
-            im_files = im_files[: round(len(im_files) * self.fraction)]
         return im_files
 
     def update_labels(self, include_class: Optional[list]):

@@ -78,6 +78,34 @@ class DatasetManager:
         plt.tight_layout()
         plt.show()
 
+    def get_class_fraction_images(self, class_fraction):
+        class_counts = [len(images) for images in self.images_by_classes]
+        class_counts_needed = [
+            max(int(count * class_fraction), 1) for count in class_counts
+        ]
+
+        selected_images = []
+        for cls, images in enumerate(self.images_by_classes):
+            for image in images:
+                if class_counts_needed[cls] > 0:
+                    added = True
+                    for cls2 in self.classes_by_images[image]:
+                        if class_counts_needed[cls2] <= 0:
+                            added = False
+                        class_counts_needed[cls2] -= 1
+                    if not added:
+                        for cls2 in self.classes_by_images[image]:
+                            class_counts_needed[cls2] += 1
+                    else:
+                        selected_images.append(image)
+                else:
+                    break
+            if class_counts_needed[cls] > 0:
+                selected_images.append(random.choice(self.images_by_classes[cls]))
+                class_counts_needed[cls] -= 1
+
+        return selected_images
+
     def dataset_balancing(self):
         # returns the names of the classes that needs to be oversampled
         images_to_oversample = self.get_images_to_oversample()

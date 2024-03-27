@@ -32,6 +32,7 @@ close_mosaic: 10 # (int) disable mosaic augmentation for final epochs (0 to disa
 resume: False # (bool) resume training from last checkpoint
 amp: True # (bool) Automatic Mixed Precision (AMP) training, choices=[True, False], True runs AMP check
 fraction: 1.0 # (float) dataset fraction to train on (default is 1.0, all images in train set)
+class_fraction: 1.0 # (float) dataset fraction of all classes to train on (default is 1.0, all images in train set)
 class_oversampling: False # (bool) Class oversampling on train data (default is False to disable)
 profile: False # (bool) profile ONNX and TensorRT speeds during training for loggers
 freeze: None # (int | list, optional) freeze first n layers, or freeze list of layer indices during training
