@@ -162,6 +162,10 @@ class BaseDataset(Dataset):
             else:
                 if self.fraction < 1:  # normal fraction has priority
                     im_files = im_files[: round(len(im_files) * self.fraction)]
+                    if self.class_fraction < 1:
+                        LOGGER.warning(
+                            f"{self.prefix}WARNING ⚠️ Normal fraction has priority. Ignoring class fraction..."
+                        )
                 elif self.class_fraction < 1:
                     im_files = sorted(
                         [
