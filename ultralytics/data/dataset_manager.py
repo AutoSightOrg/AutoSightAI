@@ -69,9 +69,9 @@ class DatasetManager:
             alpha=1.0,
             color=colors,
         )
-        plt.xlabel("Road Sign Classes")
+        plt.xlabel("Classes")
         plt.ylabel("Number of Images")
-        plt.title("Road Sign Classes Distribution Map")
+        plt.title("Classes Distribution Map")
 
         plt.xticks(range(len(class_counts)), self.class_names, rotation=45, ha="right")
 
@@ -109,7 +109,6 @@ class DatasetManager:
         return selected_images
 
     def dataset_balancing(self):
-        # returns the names of the classes that needs to be oversampled
         images_to_oversample = self.get_images_to_oversample()
         self._transform_images_balance(images_to_oversample, 0)
 
@@ -200,7 +199,6 @@ class DatasetManager:
                 image_name = random.choice(images_to_transform)
 
             base_name, extension = os.path.splitext(image_name)
-            base_name = base_name[:13]
 
             img, yolo_bboxes = self._read_img_and_bboxes(image_name)
             if self.transform:
