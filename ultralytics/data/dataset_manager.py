@@ -81,7 +81,7 @@ class DatasetManager:
     def get_class_fraction_images(self, class_fraction):
         class_counts = [len(images) for images in self.images_by_classes]
         class_counts_needed = [
-            max(int(count * class_fraction), 1) for count in class_counts
+            max(round(count * class_fraction), 1) for count in class_counts
         ]
 
         selected_images = []
@@ -100,9 +100,11 @@ class DatasetManager:
                         selected_images.append(image)
                 else:
                     break
-            if class_counts_needed[cls] > 0:
-                selected_images.append(random.choice(self.images_by_classes[cls]))
-                class_counts_needed[cls] -= 1
+            while class_counts_needed[cls] > 0:
+                random_img = random.choice(self.images_by_classes[cls])
+                for cls2 in self.classes_by_images[random_img]:
+                    class_counts_needed[cls2] -= 1
+                selected_images.append(random_img)
 
         return selected_images
 
