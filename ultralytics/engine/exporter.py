@@ -361,9 +361,12 @@ class Exporter:
             elif isinstance(self.model, DetectionModel) or isinstance(self.model, QuantizableDetectionModel):
                 dynamic["output0"] = {0: "batch", 2: "anchors"}  # shape(1, 84, 8400)
 
+        model = self.model.cpu() if dynamic else self.model
+        im = self.im.cpu() if dynamic else self.im
+        ts = torch.jit.trace(model, im, strict=False)
         torch.onnx.export(
-            self.model.cpu() if dynamic else self.model,  # dynamic=True only compatible with cpu
-            self.im.cpu() if dynamic else self.im,
+            ts,
+            im,
             f,
             verbose=False,
             opset_version=opset_version,
@@ -371,6 +374,7 @@ class Exporter:
             input_names=["images"],
             output_names=output_names,
             dynamic_axes=dynamic or None,
+            operator_export_type=torch.onnx.OperatorExportTypes.ONNX_ATEN_FALLBACK
         )
 
         # Checks

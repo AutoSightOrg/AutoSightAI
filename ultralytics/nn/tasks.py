@@ -359,11 +359,15 @@ class QuantizableDetectionModel(DetectionModel):
         if not self.is_fused():
             fuse_modules = torch.ao.quantization.fuse_modules_qat if is_qat else torch.ao.quantization.fuse_modules
             for m in self.modules():
-                if type(m) == QConv:
+                if isinstance(m, QConv):
                     fuse_modules(m, ['conv', 'bn', 'act'], inplace=True)
                     m.forward = m.forward_quant_fuse
                     delattr(m, 'bn')
                     delattr(m, 'act')
+                elif isinstance(m, Conv):
+                    m.conv = fuse_conv_and_bn(m.conv, m.bn)
+                    m.forward = m.forward_fuse
+                    delattr(m, "bn")
         return self
 
     def _prepare_for_stat_quant(self, qconfig='x86'):
