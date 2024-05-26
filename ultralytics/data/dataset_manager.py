@@ -101,12 +101,15 @@ class DatasetManager:
                             class_counts_needed[cls2] += 1
                     else:
                         selected_images.append(image)
-            while class_counts_needed[cls] > 0:
-                for image in self.images_by_classes[cls]:
-                    if image not in selected_images:
-                        for cls2 in self.classes_by_images[image]:
-                            class_counts_needed[cls2] -= 1
-                        selected_images.append(image)
+            
+            for image in images:
+                if class_counts_needed[cls] <= 0:
+                    break
+                
+                if image not in selected_images:
+                    for cls2 in self.classes_by_images[image]:
+                        class_counts_needed[cls2] -= 1
+                    selected_images.append(image)
 
         return selected_images
 
