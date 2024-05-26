@@ -87,7 +87,10 @@ class DatasetManager:
         selected_images = []
         for cls, images in enumerate(self.images_by_classes):
             for image in images:
-                if class_counts_needed[cls] > 0:
+                if class_counts_needed[cls] <= 0:
+                    break
+
+                if image not in selected_images:
                     added = True
                     for cls2 in self.classes_by_images[image]:
                         if class_counts_needed[cls2] <= 0:
@@ -98,13 +101,12 @@ class DatasetManager:
                             class_counts_needed[cls2] += 1
                     else:
                         selected_images.append(image)
-                else:
-                    break
             while class_counts_needed[cls] > 0:
-                random_img = random.choice(self.images_by_classes[cls])
-                for cls2 in self.classes_by_images[random_img]:
-                    class_counts_needed[cls2] -= 1
-                selected_images.append(random_img)
+                for image in self.images_by_classes[cls]:
+                    if image not in selected_images:
+                        for cls2 in self.classes_by_images[image]:
+                            class_counts_needed[cls2] -= 1
+                        selected_images.append(image)
 
         return selected_images
 
