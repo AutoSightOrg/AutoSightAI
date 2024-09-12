@@ -41,6 +41,15 @@ from ultralytics.nn.modules import (
     RTDETRDecoder,
     Segment,
 )
+from ultralytics.nn.quantization.modules import (
+    Quant,
+    QConv,
+    QBottleneck,
+    QC2f,
+    QConcat,
+    QSPPF,
+    QDetect
+)
 from ultralytics.utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER, colorstr, emojis, yaml_load
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
 from ultralytics.utils.loss import v8ClassificationLoss, v8DetectionLoss, v8OBBLoss, v8PoseLoss, v8SegmentationLoss
@@ -169,7 +178,7 @@ class BaseModel(nn.Module):
         """
         if not self.is_fused():
             for m in self.model.modules():
-                if isinstance(m, (Conv, Conv2, DWConv)) and hasattr(m, "bn"):
+                if isinstance(m, (Conv, QConv, Conv2, DWConv)) and hasattr(m, "bn"):
                     if isinstance(m, Conv2):
                         m.fuse_convs()
                     m.conv = fuse_conv_and_bn(m.conv, m.bn)  # update conv
@@ -222,7 +231,7 @@ class BaseModel(nn.Module):
         """
         self = super()._apply(fn)
         m = self.model[-1]  # Detect()
-        if isinstance(m, (Detect, Segment)):
+        if isinstance(m, (Detect, QDetect, Segment)):
             m.stride = fn(m.stride)
             m.anchors = fn(m.anchors)
             m.strides = fn(m.strides)
@@ -281,7 +290,7 @@ class DetectionModel(BaseModel):
 
         # Build strides
         m = self.model[-1]  # Detect()
-        if isinstance(m, (Detect, Segment, Pose, OBB)):
+        if isinstance(m, (Detect, QDetect, Segment, Pose, OBB)):
             s = 256  # 2x min stride
             m.inplace = self.inplace
             forward = lambda x: self.forward(x)[0] if isinstance(m, (Segment, Pose, OBB)) else self.forward(x)
@@ -336,6 +345,55 @@ class DetectionModel(BaseModel):
     def init_criterion(self):
         """Initialize the loss criterion for the DetectionModel."""
         return v8DetectionLoss(self)
+
+
+class QuantizableDetectionModel(DetectionModel):
+    qconfig = None
+    prepared_for_quant = False
+    quantized = False
+
+    def __init__(self, cfg="yolov8n-quant-detect.yaml", ch=3, nc=None, verbose=True):
+        super().__init__(cfg, ch, nc, verbose)
+
+    def _fuse_for_quantization(self, is_qat=False):
+        if not self.is_fused():
+            fuse_modules = torch.ao.quantization.fuse_modules_qat if is_qat else torch.ao.quantization.fuse_modules
+            for m in self.modules():
+                if isinstance(m, QConv):
+                    fuse_modules(m, ['conv', 'bn', 'act'], inplace=True)
+                    m.forward = m.forward_quant_fuse
+                    delattr(m, 'bn')
+                    delattr(m, 'act')
+                elif isinstance(m, Conv):
+                    m.conv = fuse_conv_and_bn(m.conv, m.bn)
+                    m.forward = m.forward_fuse
+                    delattr(m, "bn")
+        return self
+
+    def _prepare_for_stat_quant(self, qconfig='x86'):
+        self.to('cpu')
+        self.eval()
+        self._fuse_for_quantization(is_qat=False)
+        self.qconfig = torch.ao.quantization.get_default_qconfig(qconfig)
+        torch.ao.quantization.prepare(self, inplace=True)
+
+    def _prepare_for_qat(self, qconfig='x86'):
+        self._fuse_for_quantization(is_qat=True)
+        self.qconfig = torch.ao.quantization.get_default_qat_qconfig(qconfig)
+        torch.ao.quantization.prepare_qat(self, inplace=True)
+        self.apply(torch.ao.quantization.enable_observer)
+        self.apply(torch.ao.quantization.enable_fake_quant)
+
+    def prepare(self, qconfig='x86', is_qat=False):
+        assert not self.prepared_for_quant
+        self._prepare_for_qat(qconfig) if is_qat else self._prepare_for_stat_quant(qconfig)
+        self.prepared_for_quant = True
+
+    def convert(self, is_qat=False):
+        assert self.prepared_for_quant and not self.quantized
+        if is_qat:
+            self.eval()
+        torch.ao.quantization.convert(self, inplace=True)
 
 
 class OBBModel(DetectionModel):
@@ -686,7 +744,7 @@ def attempt_load_weights(weights, device=None, inplace=True, fuse=False):
     # Module updates
     for m in ensemble.modules():
         t = type(m)
-        if t in (nn.Hardswish, nn.LeakyReLU, nn.ReLU, nn.ReLU6, nn.SiLU, Detect, Segment, Pose, OBB):
+        if t in (nn.Hardswish, nn.LeakyReLU, nn.ReLU, nn.ReLU6, nn.SiLU, Detect, QDetect, Segment, Pose, OBB):
             m.inplace = inplace
         elif t is nn.Upsample and not hasattr(m, "recompute_scale_factor"):
             m.recompute_scale_factor = None  # torch 1.11.0 compatibility
@@ -722,7 +780,7 @@ def attempt_load_one_weight(weight, device=None, inplace=True, fuse=False):
     # Module updates
     for m in model.modules():
         t = type(m)
-        if t in (nn.Hardswish, nn.LeakyReLU, nn.ReLU, nn.ReLU6, nn.SiLU, Detect, Segment, Pose, OBB):
+        if t in (nn.Hardswish, nn.LeakyReLU, nn.ReLU, nn.ReLU6, nn.SiLU, Detect, QDetect, Segment, Pose, OBB):
             m.inplace = inplace
         elif t is nn.Upsample and not hasattr(m, "recompute_scale_factor"):
             m.recompute_scale_factor = None  # torch 1.11.0 compatibility
@@ -766,18 +824,22 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
         if m in (
             Classify,
             Conv,
+            QConv,
             ConvTranspose,
             GhostConv,
             Bottleneck,
+            QBottleneck,
             GhostBottleneck,
             SPP,
             SPPF,
+            QSPPF,
             DWConv,
             Focus,
             BottleneckCSP,
             C1,
             C2,
             C2f,
+            QC2f,
             C3,
             C3TR,
             C3Ghost,
@@ -791,7 +853,7 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
                 c2 = make_divisible(min(c2, max_channels) * width, 8)
 
             args = [c1, c2, *args[1:]]
-            if m in (BottleneckCSP, C1, C2, C2f, C3, C3TR, C3Ghost, C3x, RepC3):
+            if m in (BottleneckCSP, C1, C2, C2f, QC2f, C3, C3TR, C3Ghost, C3x, RepC3):
                 args.insert(2, n)  # number of repeats
                 n = 1
         elif m is AIFI:
@@ -806,9 +868,9 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             c2 = args[1] if args[3] else args[1] * 4
         elif m is nn.BatchNorm2d:
             args = [ch[f]]
-        elif m is Concat:
+        elif m in (Concat, QConcat):
             c2 = sum(ch[x] for x in f)
-        elif m in (Detect, Segment, Pose, OBB):
+        elif m in (Detect, QDetect, Segment, Pose, OBB):
             args.append([ch[x] for x in f])
             if m is Segment:
                 args[2] = make_divisible(min(args[2], max_channels) * width, 8)
@@ -911,7 +973,7 @@ def guess_model_task(model):
                 return cfg2task(eval(x))
 
         for m in model.modules():
-            if isinstance(m, Detect):
+            if isinstance(m, (Detect, QDetect)):
                 return "detect"
             elif isinstance(m, Segment):
                 return "segment"

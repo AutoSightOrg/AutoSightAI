@@ -170,7 +170,7 @@ class BaseTrainer:
         for callback in self.callbacks.get(event, []):
             callback(self)
 
-    def train(self):
+    def train(self, qat=False):
         """Allow device='', device=None on Multi-GPU systems to default to device=0."""
         if isinstance(self.args.device, str) and len(self.args.device):  # i.e. device='0' or device='0,1,2,3'
             world_size = len(self.args.device.split(","))
@@ -205,7 +205,7 @@ class BaseTrainer:
                 ddp_cleanup(self, str(file))
 
         else:
-            self._do_train(world_size)
+            self._do_train(world_size, qat)
 
     def _setup_scheduler(self):
         """Initialize training learning rate scheduler."""
@@ -228,7 +228,7 @@ class BaseTrainer:
             world_size=world_size,
         )
 
-    def _setup_train(self, world_size):
+    def _setup_train(self, world_size, qat=False):
         """Builds dataloaders and optimizer on correct rank process."""
 
         # Model
@@ -293,6 +293,7 @@ class BaseTrainer:
             metric_keys = self.validator.metrics.keys + self.label_loss_items(prefix="val")
             self.metrics = dict(zip(metric_keys, [0] * len(metric_keys)))
             self.ema = ModelEMA(self.model)
+            self.ema.enabled = not qat
             if self.args.plots:
                 self.plot_training_labels()
 
@@ -315,11 +316,11 @@ class BaseTrainer:
         self.scheduler.last_epoch = self.start_epoch - 1  # do not move
         self.run_callbacks("on_pretrain_routine_end")
 
-    def _do_train(self, world_size=1):
+    def _do_train(self, world_size=1, qat=False):
         """Train completed, evaluate and plot if specified by arguments."""
         if world_size > 1:
             self._setup_ddp(world_size)
-        self._setup_train(world_size)
+        self._setup_train(world_size, qat)
 
         nb = len(self.train_loader)  # number of batches
         nw = max(round(self.args.warmup_epochs * nb), 100) if self.args.warmup_epochs > 0 else -1  # warmup iterations

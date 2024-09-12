@@ -66,7 +66,8 @@ from ultralytics.data.dataset import YOLODataset
 from ultralytics.data.utils import check_det_dataset
 from ultralytics.nn.autobackend import check_class_names, default_class_names
 from ultralytics.nn.modules import C2f, Detect, RTDETRDecoder
-from ultralytics.nn.tasks import DetectionModel, SegmentationModel
+from ultralytics.nn.quantization.modules import QC2f, QDetect
+from ultralytics.nn.tasks import DetectionModel, QuantizableDetectionModel, SegmentationModel
 from ultralytics.utils import (
     ARM64,
     DEFAULT_CFG,
@@ -216,11 +217,11 @@ class Exporter:
         model.float()
         model = model.fuse()
         for m in model.modules():
-            if isinstance(m, (Detect, RTDETRDecoder)):  # Segment and Pose use Detect base class
+            if isinstance(m, (Detect, QDetect, RTDETRDecoder)):  # Segment and Pose use Detect base class
                 m.dynamic = self.args.dynamic
                 m.export = True
                 m.format = self.args.format
-            elif isinstance(m, C2f) and not any((saved_model, pb, tflite, edgetpu, tfjs)):
+            elif isinstance(m, (C2f, QC2f)) and not any((saved_model, pb, tflite, edgetpu, tfjs)):
                 # EdgeTPU does not support FlexSplitV while split provides cleaner ONNX graph
                 m.forward = m.forward_split
 
@@ -357,12 +358,15 @@ class Exporter:
             if isinstance(self.model, SegmentationModel):
                 dynamic["output0"] = {0: "batch", 2: "anchors"}  # shape(1, 116, 8400)
                 dynamic["output1"] = {0: "batch", 2: "mask_height", 3: "mask_width"}  # shape(1,32,160,160)
-            elif isinstance(self.model, DetectionModel):
+            elif isinstance(self.model, DetectionModel) or isinstance(self.model, QuantizableDetectionModel):
                 dynamic["output0"] = {0: "batch", 2: "anchors"}  # shape(1, 84, 8400)
 
+        model = self.model.cpu() if dynamic else self.model
+        im = self.im.cpu() if dynamic else self.im
+        ts = torch.jit.trace(model, im, strict=False)
         torch.onnx.export(
-            self.model.cpu() if dynamic else self.model,  # dynamic=True only compatible with cpu
-            self.im.cpu() if dynamic else self.im,
+            ts,
+            im,
             f,
             verbose=False,
             opset_version=opset_version,
@@ -370,6 +374,7 @@ class Exporter:
             input_names=["images"],
             output_names=output_names,
             dynamic_axes=dynamic or None,
+            operator_export_type=torch.onnx.OperatorExportTypes.ONNX_ATEN_FALLBACK
         )
 
         # Checks
@@ -455,7 +460,7 @@ class Exporter:
                 LOGGER.warning(f"{prefix} WARNING ⚠️ >300 images recommended for INT8 calibration, found {n} images.")
             quantization_dataset = nncf.Dataset(dataset, transform_fn)
             ignored_scope = None
-            if isinstance(self.model.model[-1], (Detect, RTDETRDecoder)):  # Segment and Pose use Detect base class
+            if isinstance(self.model.model[-1], (Detect, QDetect, RTDETRDecoder)):  # Segment and Pose use Detect base class
                 # get detection module name in onnx
                 head_module_name = ".".join(list(self.model.named_modules())[-1][0].split(".")[:2])
 

@@ -56,7 +56,7 @@ class Detect(nn.Module):
 
         if self.export and self.format in ("saved_model", "pb", "tflite", "edgetpu", "tfjs"):  # avoid TF FlexSplitV ops
             box = x_cat[:, : self.reg_max * 4]
-            cls = x_cat[:, self.reg_max * 4 :]
+            cls = x_cat[:, self.reg_max * 4:]
         else:
             box, cls = x_cat.split((self.reg_max * 4, self.nc), 1)
 
@@ -76,9 +76,7 @@ class Detect(nn.Module):
 
     def bias_init(self):
         """Initialize Detect() biases, WARNING: requires stride availability."""
-        m = self  # self.model[-1]  # Detect() module
-        # cf = torch.bincount(torch.tensor(np.concatenate(dataset.labels, 0)[:, 0]).long(), minlength=nc) + 1
-        # ncf = math.log(0.6 / (m.nc - 0.999999)) if cf is None else torch.log(cf / cf.sum())  # nominal class frequency
+        m = self
         for a, b, s in zip(m.cv2, m.cv3, m.stride):  # from
             a[-1].bias.data[:] = 1.0  # box
             b[-1].bias.data[: m.nc] = math.log(5 / m.nc / (640 / s) ** 2)  # cls (.01 objects, 80 classes, 640 img)
